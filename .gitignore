@@ -1,0 +1,15 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Spark / checkpoints locaux éventuels
+spark/_checkpoint/
+*.crc
+
+# OS
+.DS_Store
+Thumbs.db
