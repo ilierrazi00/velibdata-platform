@@ -1,0 +1,54 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "panels": [
+    {
+      "title": "Messages totaux par topic",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "kafka_topic_partition_current_offset", "legendFormat": "{{topic}}" }
+      ],
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" } } }
+    },
+    {
+      "title": "Débit d'ingestion (messages/sec par topic)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 0 },
+      "targets": [
+        { "expr": "rate(kafka_topic_partition_current_offset[1m])", "legendFormat": "{{topic}}" }
+      ]
+    },
+    {
+      "title": "Consumer lag (retard de traitement)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "expr": "kafka_consumergroup_lag", "legendFormat": "{{consumergroup}} - {{topic}}" }
+      ]
+    },
+    {
+      "title": "Nombre de topics",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 8 },
+      "targets": [
+        { "expr": "count(count by (topic) (kafka_topic_partitions))" }
+      ]
+    },
+    {
+      "title": "Brokers Kafka actifs",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 8 },
+      "targets": [
+        { "expr": "kafka_brokers" }
+      ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["velib", "kafka"],
+  "time": { "from": "now-1h", "to": "now" },
+  "title": "VélibData — Supervision Pipeline",
+  "uid": "velib-main",
+  "version": 1
+}
