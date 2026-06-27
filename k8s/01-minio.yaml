@@ -1,0 +1,84 @@
+# Secret contenant les identifiants MinIO
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-creds
+  namespace: velibdata
+type: Opaque
+stringData:
+  MINIO_ROOT_USER: velibadmin
+  MINIO_ROOT_PASSWORD: Velib2026SecureLake
+---
+# Service headless (nécessaire pour le StatefulSet distribué)
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-headless
+  namespace: velibdata
+spec:
+  clusterIP: None
+  selector:
+    app: minio
+  ports:
+    - name: api
+      port: 9000
+---
+# Service d'accès (console + API)
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: velibdata
+spec:
+  selector:
+    app: minio
+  ports:
+    - name: api
+      port: 9000
+      targetPort: 9000
+    - name: console
+      port: 9001
+      targetPort: 9001
+---
+# StatefulSet MinIO distribué : 4 pods répliqués
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minio
+  namespace: velibdata
+spec:
+  serviceName: minio-headless
+  replicas: 4
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+        - name: minio
+          image: minio/minio:latest
+          args:
+            - server
+            - http://minio-{0...3}.minio-headless.velibdata.svc.cluster.local/data
+            - --console-address
+            - ":9001"
+          envFrom:
+            - secretRef:
+                name: minio-creds
+          ports:
+            - containerPort: 9000
+            - containerPort: 9001
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
