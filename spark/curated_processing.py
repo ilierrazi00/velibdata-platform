@@ -1,7 +1,10 @@
 import os
 import time
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, round as spark_round, current_timestamp, lit
+from pyspark.sql.window import Window
+from pyspark.sql.functions import (
+    col, round as spark_round, current_timestamp, lit, least, row_number
+)
 
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "http://minio:9000")
 MINIO_USER = os.getenv("MINIO_ROOT_USER")
@@ -27,7 +30,7 @@ def build_curated():
     info = spark.read.parquet("s3a://clean/station_information")
     weather = spark.read.parquet("s3a://clean/weather")
 
-    # Dernier relevé météo (la plus récente)
+    # Dernier relevé météo (le plus récent)
     last_weather = weather.orderBy(col("weather_ts").desc()).limit(1)
     w = last_weather.select(
         col("temperature").alias("meteo_temp"),
@@ -36,8 +39,6 @@ def build_curated():
     )
 
     # Dernier état de disponibilité par station (déduplication sur le plus récent)
-    from pyspark.sql.window import Window
-    from pyspark.sql.functions import row_number
     w_spec = Window.partitionBy("stationcode").orderBy(col("ingestion_ts").desc())
     latest_status = (
         status.withColumn("rn", row_number().over(w_spec))
@@ -75,6 +76,16 @@ print("Démarrage du traitement CURATED (batch toutes les %ds)" % BATCH_INTERVAL
 while True:
     try:
         curated = build_curated()
+        # Nettoyage qualité : on fiabilise la donnée métier
+        curated = (
+            curated
+            .filter(col("stationcode").isNotNull())                     # pas de station sans code
+            .filter((col("capacity") > 0) & (col("capacity") <= 100))   # capacité plausible
+            .withColumn(                                                 # taux plafonné à 100
+                "taux_occupation",
+                least(col("taux_occupation"), lit(100.0))
+            )
+        )
         (
             curated.write.mode("overwrite")
             .parquet("s3a://curated/stations_enrichies")

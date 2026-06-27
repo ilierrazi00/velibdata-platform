@@ -213,6 +213,17 @@ services:
       - ./monitoring/grafana/dashboards:/etc/grafana/dashboards
     depends_on:
       - prometheus
+
+  # --- Great Expectations (tests qualité des données) ---
+  great-expectations:
+    build: ./great_expectations
+    container_name: velib-great-expectations
+    env_file: .env
+    environment:
+      - MINIO_ENDPOINT=http://minio:9000
+    depends_on:
+      minio:
+        condition: service_healthy
       
 volumes:
   minio-data:
