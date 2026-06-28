@@ -1,0 +1,43 @@
+name: CI - VélibData Platform
+
+# Déclencheurs : à chaque push et chaque pull request sur main
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint-and-test:
+    name: Validation du code Python
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Récupérer le code du dépôt
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      # 2. Installer Python
+      - name: Installer Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # 3. Installer les dépendances + outils de qualité
+      - name: Installer les dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 pytest
+          pip install -r producers/requirements.txt
+
+      # 4. Vérifier la syntaxe et la qualité du code (lint)
+      - name: Lint avec flake8
+        run: |
+          # Erreurs critiques uniquement (syntaxe, imports cassés)
+          flake8 producers/ spark/ --count --select=E9,F63,F7,F82 --show-source --statistics
+
+      # 5. Vérifier que les scripts se compilent sans erreur
+      - name: Vérifier la compilation des scripts
+        run: |
+          python -m py_compile producers/*.py spark/*.py
+          echo "Tous les scripts Python compilent correctement."
