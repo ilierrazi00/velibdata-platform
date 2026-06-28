@@ -1,0 +1,33 @@
+# CronJob de rétention : purge automatique des données RAW anciennes
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: velib-retention-raw
+  namespace: velibdata
+spec:
+  schedule: "0 2 * * *"          # tous les jours à 02h00 (maintenance préventive)
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: retention
+              image: minio/mc:latest
+              envFrom:
+                - secretRef:
+                    name: minio-creds
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  echo "=== Maintenance prévetive : rétention RAW ==="
+                  mc alias set lake http://minio.velibdata.svc.cluster.local:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
+                  mc mb --ignore-existing lake/raw
+                  echo "Purge des objets RAW de plus de 30 jours..."
+                  mc rm --recursive --force --older-than 30d lake/raw || true
+                  echo "Rétention terminée avec succès."
