@@ -13,3 +13,6 @@ spark/_checkpoint/
 # OS
 .DS_Store
 Thumbs.db
+mc.exe
+sample_curated/
+sample_curated.zip
