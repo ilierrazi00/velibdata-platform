@@ -94,7 +94,7 @@ La pérennité de la solution repose sur une documentation versionnée et reprod
 **Principes de préservation :**
 
 - **Versionnement Git** : tout changement de code, de configuration ou de documentation est tracé par commit, ce qui garantit l'historique et la possibilité de revenir à un état antérieur.
-- **Infrastructure as Code** : les manifestes Kubernetes (`k8s/`), les charts Helm (`helm/`), les définitions Terraform (`terraform/`) et le `docker-compose.yml` décrivent l'infrastructure de manière reproductible — la plateforme peut être reconstruite à l'identique.
+- **Infrastructure as Code** : les manifestes Kubernetes (`k8s/` — namespace, MinIO, démonstration d'autoscaling, CronJob de rétention) et le `docker-compose.yml` décrivent l'infrastructure de manière déclarative et reproductible : la plateforme peut être reconstruite à l'identique à partir du dépôt. *Piste d'évolution : industrialiser ce déploiement via des charts Helm (paramétrage par environnement) et/ou du provisioning Terraform pour un passage en production multi-environnements.*
 - **Documentation projet** : le `README.md` (procédure de démarrage) et le dossier `docs/` consignent l'architecture, les choix techniques et les procédures.
 - **Validation continue** : le workflow GitHub Actions (`.github/workflows/`) valide le code à chaque `push` (cf. compétence 3), empêchant la dérive de la documentation par rapport au code réel.
 - **Secrets** : les valeurs sensibles ne sont pas versionnées ; seul le modèle `.env.example` l'est. *Recommandation d'amélioration : chiffrer les secrets Kubernetes au repos (chiffrement etcd, ou solution type Sealed Secrets / Vault), le simple encodage base64 actuel n'étant pas un mécanisme de protection.*
