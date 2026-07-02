@@ -82,6 +82,10 @@ Le format de stockage retenu (Parquet compressé en Snappy) a été comparé aux
 
 > Précision technique : la compression Snappy seule (Parquet compressé vs Parquet non compressé) apporte ici un gain marginal, car le volume CURATED est faible et les colonnes peu redondantes. L'essentiel du gain provient du **format colonnaire Parquet** lui-même, pas uniquement du codec.
 
+### 4.5 Supervision (monitoring) de l'espace de stockage et des performances
+
+Le suivi continu des performances et de l'occupation du stockage est assuré par la pile **Prometheus + Grafana**, alimentée par le Kafka exporter et les métriques des conteneurs. Cette solution joue, dans l'architecture VélibData, le rôle que l'énoncé illustre par ElasticELK / APM : elle permet de suivre le débit du pipeline, de surveiller le taux de remplissage des volumes de stockage et de détecter les anomalies (retard de traitement, saturation, indisponibilité d'un composant) via des seuils d'alerte. Un dashboard de supervision dédié (« Supervision Pipeline ») est provisionné automatiquement au démarrage. Le stockage objet (MinIO) et le traitement (Spark) sont ainsi observables en continu, ce qui permet de remonter les problèmes de performance ou d'espace **avant** qu'ils n'affectent la pérennité de la solution.
+
 ## 5. Contrôle de conformité : anomalies détectées
 
 Le rôle de cette compétence est aussi de *contrôler la bonne application de la politique des données*. L'analyse a révélé trois anomalies de stockage à corriger. Elles ne remettent pas en cause le fonctionnement de la plateforme, mais affectent sa performance et sa pérennité, et alimentent directement le protocole de maintenance (compétence 8).
@@ -140,4 +144,4 @@ Le contrôle a néanmoins mis en évidence un enjeu de **maintenance préventive
 ---
 
 *Annexe — Commandes de mesure utilisées (reproductibilité) :*
-`mc du velib/{raw,clean,curated}` · `mc ls --recursive --summarize` · lecture des métadonnées Parquet via PyArrow · relevé du 29/06/2026.
+`mc du velibdc/raw velibdc/clean velibdc/curated` · `mc ls --recursive --summarize velibdc/clean` · lecture des métadonnées Parquet via PyArrow · relevé du 29/06/2026.
