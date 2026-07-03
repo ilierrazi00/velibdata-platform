@@ -93,6 +93,25 @@ Procédures de rétablissement, par type d'incident. Chaque entrée indique le s
 | **Lag Kafka élevé** (retard de traitement) | Lag visible dans Grafana (Kafka exporter) | KEDA met automatiquement à l'échelle les workers Spark (1→4, cf. compétence 6). Si le lag persiste, vérifier la santé des producers. |
 | **Connecteurs Spark indisponibles** | Erreur de téléchargement de packages au démarrage Spark | Le volume `spark-ivy` met en cache les connecteurs ; vérifier sa présence. En dernier recours, re-télécharger les packages référencés dans le `spark-submit`. |
 
+### 5.1 Cas réel documenté — Blocage silencieux d'écriture et reprise sur incident
+
+Le tableau ci-dessus décrit les procédures génériques par type d'incident. Cette section documente un **incident réel survenu et résolu** pendant l'exploitation de la plateforme, illustrant concrètement la réexécution des tâches (cf. 5bis.5) au-delà du cas théorique.
+
+**Chronologie de l'incident :**
+
+| Horodatage | Événement |
+|---|---|
+| 2026-06-29 22:41:29 | Dernier commit de checkpoint sain sur le flux `station_status` (n° 411) |
+| 2026-07-02 → 2026-07-03 | Déconnexions réseau répétées entre Spark et Kafka (`DisconnectException: node 0 being disconnected`), provoquant des micro-batches anormalement longs (jusqu'à 2h07 au lieu de 30 s) |
+| 2026-07-03 22:25 | Un premier redémarrage isolé (`docker compose restart spark`) relance le process, visible comme `RUNNING` dans la Spark UI (`/StreamingQuery/`) avec un débit apparent élevé, mais **aucune nouvelle écriture n'atteint MinIO** — aucun nouveau commit de checkpoint après plus de 35 minutes |
+| 2026-07-04 00:58 | Diagnostic écarté : ni panne réseau (test `/dev/tcp` réussi), ni Kafka en erreur (logs Kafka propres), ni exception explicite dans les logs Spark — le blocage reste silencieux |
+| 2026-07-04 00:58 | Action corrective : redémarrage complet du stack (`docker compose down && docker compose up -d`) plutôt qu'un redémarrage isolé, pour repartir sur un état cohérent de l'ensemble des composants |
+| 2026-07-04 01:01:35 | **Reprise confirmée** : nouveau commit de checkpoint n° 412, soit exactement la suite du n° 411 — aucune perte, aucun retraitement complet depuis l'origine |
+
+**Enseignement retenu :** un redémarrage isolé d'un seul composant (`restart spark`) peut laisser le système dans un état incohérent lorsque l'incident touche plusieurs composants interdépendants (ici, une coupure réseau ayant affecté à la fois Kafka et Spark). Dans ce cas, un redémarrage complet et ordonné de l'ensemble de la stack (`docker compose down` puis `up -d`, qui respecte l'ordre de démarrage défini par les `depends_on`) s'est révélé plus fiable qu'un redémarrage ciblé. Cette observation est intégrée au runbook : **en cas de blocage silencieux persistant après un redémarrage isolé (absence de progression du checkpoint malgré un statut `RUNNING`), l'action de second niveau recommandée est un redémarrage complet de la stack plutôt qu'une investigation prolongée**, le coût d'un redémarrage complet étant faible comparé au temps de diagnostic d'un blocage sans erreur explicite.
+
+Cet incident constitue une preuve opérationnelle, non simulée, du mécanisme de réexécution des tâches décrit en 5bis.5 : le checkpoint Spark a permis une reprise exacte au point d'interruption, sur un cas réel de production plutôt qu'un test provoqué.
+
 ## 5bis. Plan de récupération des données (Disaster Recovery)
 
 Le runbook d'incidents (§5) couvre les pannes où la donnée reste intègre (pod redémarré, pipeline relancé). Cette section couvre le scénario distinct où la **donnée elle-même est perdue ou corrompue** — perte de volume, suppression accidentelle d'un bucket, corruption disque — conformément à l'exigence de la grille sur les *« plans de récupération des données »*.
