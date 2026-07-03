@@ -74,6 +74,12 @@ Conformément à l'exigence de justification de la compétence 2, les choix de c
 
 **Absence de machines virtuelles dédiées.** Le choix a été fait de conteneuriser directement (Docker Desktop + Kubernetes intégré) plutôt que de provisionner des VM séparées par nœud. Justification : à l'échelle de la maquette académique, des VM ajouteraient une couche de virtualisation redondante avec l'isolation déjà apportée par les conteneurs, sans bénéfice de sécurité ou de performance mesurable, tout en consommant davantage de ressources sur une machine de développement (32 Go de RAM partagés). Ce choix reste documenté comme un arbitrage : en environnement de production réel, un provisioning de VM (ou de nœuds cloud managés) par souci d'isolation renforcée resterait une évolution pertinente.
 
+## 4ter. Intégrité des données lors de la réplication des services (compétence 6)
+
+L'autoscaling KEDA (1→4 pods) porte exclusivement sur les **workers Spark**, qui sont des composants de calcul *stateless* : ils ne persistent aucune donnée localement, et leur duplication ou destruction ne pose donc aucun risque d'incohérence — chaque nouveau pod reprend simplement sa part de traitement depuis Kafka (offsets) ou depuis le Data Lake, sans état à synchroniser entre instances.
+
+La donnée elle-même n'est jamais répliquée par l'autoscaling : elle réside exclusivement dans MinIO, dont la réplication est gérée séparément et en continu par le `StatefulSet` à 4 réplicas fixes (cf. compétences 1 et 2), avec intégrité garantie par les mécanismes S3 natifs (checksums/ETag, cf. §4.5.1). Ce découplage est un choix d'architecture délibéré : **ne jamais scaler la couche de stockage à la volée** évite précisément les problèmes classiques de cohérence qu'impliquerait la réplication dynamique d'une base de données pendant un événement de charge (fenêtres d'incohérence, conflits d'écriture concurrente). La compétence de « maîtrise du partage de la donnée » exigée par la grille est ainsi assurée en amont, au niveau du stockage stable, plutôt qu'au niveau des workers éphémères qui, eux, n'ont par nature aucune donnée à protéger.
+
 ## 5. Maintenance corrective (runbook d'incidents)
 
 Procédures de rétablissement, par type d'incident. Chaque entrée indique le symptôme, le diagnostic et l'action.
