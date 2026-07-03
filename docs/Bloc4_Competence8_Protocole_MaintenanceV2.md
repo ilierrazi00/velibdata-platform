@@ -77,6 +77,51 @@ Procédures de rétablissement, par type d'incident. Chaque entrée indique le s
 | **Lag Kafka élevé** (retard de traitement) | Lag visible dans Grafana (Kafka exporter) | KEDA met automatiquement à l'échelle les workers Spark (1→4, cf. compétence 6). Si le lag persiste, vérifier la santé des producers. |
 | **Connecteurs Spark indisponibles** | Erreur de téléchargement de packages au démarrage Spark | Le volume `spark-ivy` met en cache les connecteurs ; vérifier sa présence. En dernier recours, re-télécharger les packages référencés dans le `spark-submit`. |
 
+## 5bis. Plan de récupération des données (Disaster Recovery)
+
+Le runbook d'incidents (§5) couvre les pannes où la donnée reste intègre (pod redémarré, pipeline relancé). Cette section couvre le scénario distinct où la **donnée elle-même est perdue ou corrompue** — perte de volume, suppression accidentelle d'un bucket, corruption disque — conformément à l'exigence de la grille sur les *« plans de récupération des données »*.
+
+### 5bis.1 Objectifs de récupération (RPO / RTO)
+
+| Zone | RPO (perte de données maximale acceptable) | RTO (temps de restauration cible) | Justification |
+|---|---|---|---|
+| RAW | 24 h | 2 h | Rejouable depuis les APIs sources si la fenêtre de rétention le permet ; criticité moindre |
+| CLEAN | 24 h | 2 h | Reconstructible par re-traitement Spark depuis RAW |
+| CURATED | 1 h | 30 min | Zone directement exposée à Power BI ; criticité opérationnelle la plus forte |
+
+### 5bis.2 Stratégie de sauvegarde
+
+- **Réplication interne (première ligne de défense)** : MinIO est déployé en `StatefulSet` à 4 réplicas sur Kubernetes, ce qui protège déjà contre la perte d'un pod ou d'un nœud unique (cf. compétence 2). Cela ne protège **pas** contre une suppression logique (bucket supprimé par erreur, script `mc rm` mal ciblé) ni contre une corruption du volume `hostpath` sous-jacent.
+- **Sauvegarde externe (miroir)** : une synchronisation périodique des buckets `raw`, `clean` et `curated` vers un second emplacement de stockage (second volume Docker, disque externe, ou bucket S3 secondaire en cas de passage cloud) via :
+
+```sh
+mc mirror --overwrite velibdc/curated backup-target/curated
+mc mirror --overwrite velibdc/clean backup-target/clean
+mc mirror --overwrite velibdc/raw backup-target/raw
+```
+
+- **Fréquence de sauvegarde** : quotidienne pour RAW et CLEAN (alignée sur la purge de rétention, §4), horaire pour CURATED (zone la plus critique et la plus petite en volume, donc peu coûteuse à sauvegarder fréquemment).
+- **Rétention des sauvegardes** : 7 jours glissants, pour permettre un retour arrière en cas de corruption détectée tardivement (ex. bug de qualité de données non capté immédiatement par Great Expectations).
+
+### 5bis.3 Procédure de restauration
+
+En cas de perte ou corruption confirmée d'une zone :
+
+1. **Isoler** : arrêter les jobs Spark écrivant vers la zone affectée, pour éviter d'écraser une sauvegarde valide par des données déjà corrompues.
+2. **Diagnostiquer l'étendue** : comparer `mc ls --recursive --summarize` entre la zone affectée et son miroir de sauvegarde pour identifier la fenêtre de perte.
+3. **Restaurer** :
+```sh
+mc mirror --overwrite backup-target/curated velibdc/curated
+```
+4. **Revalider** : relancer les règles Great Expectations sur la zone restaurée avant de reprendre l'ingestion.
+5. **Reprendre** : redémarrer les jobs Spark ; pour CLEAN et CURATED, un re-traitement complet depuis RAW reste possible en dernier recours, RAW faisant foi comme source de vérité rejouable.
+
+### 5bis.4 Cas particulier — RAW comme source de rejeu
+
+La zone RAW conservant les données brutes non transformées, elle constitue elle-même un mécanisme de récupération pour CLEAN et CURATED : en cas de perte de ces deux zones et d'absence de sauvegarde à jour, un re-traitement Spark complet depuis RAW permet de reconstruire l'état de la plateforme, au prix d'un RTO plus long (durée du batch complet plutôt que quelques minutes).
+
+*Piste d'évolution : automatiser le `mc mirror` via une CronJob Kubernetes dédiée (sur le modèle de `velib-retention-raw`), et tester la procédure de restauration au moins une fois avant la soutenance pour pouvoir en attester devant le jury.*
+
 ## 6. Rôles et responsabilités
 
 | Membre | Rôle projet | Responsabilité maintenance |
