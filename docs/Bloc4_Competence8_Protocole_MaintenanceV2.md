@@ -64,6 +64,16 @@ mc rm --recursive --force --older-than 30d velibdc/raw
 
 **Nettoyage des répertoires de staging (correction de l'anomalie n°3).** Les répertoires `_temporary/0/` résiduels laissés par des jobs interrompus sont supprimés chaque semaine.
 
+## 4bis. Justification du calibrage de l'infrastructure distribuée
+
+Conformément à l'exigence de justification de la compétence 2, les choix de configuration du cluster de stockage sont argumentés ci-dessous.
+
+**Nombre de réplicas (4).** MinIO est déployé à 4 réplicas plutôt que le minimum de 3 généralement recommandé pour un quorum distribué. Ce choix conserve une marge de tolérance : avec 4 nœuds, la perte simultanée de 2 réplicas laisse encore un quorum fonctionnel (contre un seul nœud de marge avec 3), ce qui sécurise la démonstration de tolérance de panne en contexte pédagogique où plusieurs tests peuvent être exécutés à la suite. Un cluster à 3 réplicas aurait suffi pour la seule tolérance zéro panne testée (perte d'un pod), mais 4 nœuds illustrent mieux le principe d'*auto-balancing* (répartition sur un nombre pair, cf. compétence 5) sans complexité de déploiement supplémentaire sur Docker Desktop.
+
+**Taux de réplication.** Le facteur de réplication effectif est celui du `StatefulSet` (4 copies de chaque objet réparties sur les réplicas), sans réplication supplémentaire au niveau applicatif : au vu du volume de données du projet (quelques centaines de Mio), une réplication à ce niveau est largement suffisante et évite la complexité d'un facteur de réplication configurable par bucket, pertinent seulement à plus grande échelle.
+
+**Absence de machines virtuelles dédiées.** Le choix a été fait de conteneuriser directement (Docker Desktop + Kubernetes intégré) plutôt que de provisionner des VM séparées par nœud. Justification : à l'échelle de la maquette académique, des VM ajouteraient une couche de virtualisation redondante avec l'isolation déjà apportée par les conteneurs, sans bénéfice de sécurité ou de performance mesurable, tout en consommant davantage de ressources sur une machine de développement (32 Go de RAM partagés). Ce choix reste documenté comme un arbitrage : en environnement de production réel, un provisioning de VM (ou de nœuds cloud managés) par souci d'isolation renforcée resterait une évolution pertinente.
+
 ## 5. Maintenance corrective (runbook d'incidents)
 
 Procédures de rétablissement, par type d'incident. Chaque entrée indique le symptôme, le diagnostic et l'action.
@@ -121,6 +131,12 @@ mc mirror --overwrite backup-target/curated velibdc/curated
 La zone RAW conservant les données brutes non transformées, elle constitue elle-même un mécanisme de récupération pour CLEAN et CURATED : en cas de perte de ces deux zones et d'absence de sauvegarde à jour, un re-traitement Spark complet depuis RAW permet de reconstruire l'état de la plateforme, au prix d'un RTO plus long (durée du batch complet plutôt que quelques minutes).
 
 *Piste d'évolution : automatiser le `mc mirror` via une CronJob Kubernetes dédiée (sur le modèle de `velib-retention-raw`), et tester la procédure de restauration au moins une fois avant la soutenance pour pouvoir en attester devant le jury.*
+
+### 5bis.5 Réexécution des tâches (reprise sur incident)
+
+Au-delà de la restauration de données (5bis.1 à 5bis.4), la plateforme assure la **réexécution des tâches interrompues**, exigence distincte de la grille d'évaluation. Ce mécanisme repose sur les checkpoints de Spark Structured Streaming : à chaque micro-batch, Spark persiste dans la zone CLEAN (`_checkpoint/commits`, `_checkpoint/offsets`) l'état d'avancement de la consommation Kafka.
+
+En cas d'interruption d'un job (crash du conteneur Spark, redémarrage machine), le redémarrage du job (`docker compose up -d`) fait reprendre Spark **exactement à l'offset Kafka du dernier micro-batch validé**, sans retraitement ni perte des messages déjà consommés — la réexécution repart du point d'interruption plutôt que depuis zéro. C'est ce même mécanisme qui explique la présence des ≈ 35 000 fichiers de checkpoint identifiés en compétence 7, dont la purge périodique (§4) est calibrée pour conserver uniquement les checkpoints nécessaires à cette reprise, sans accumulation indéfinie.
 
 ## 6. Rôles et responsabilités
 
