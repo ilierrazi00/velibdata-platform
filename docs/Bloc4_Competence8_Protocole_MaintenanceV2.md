@@ -112,6 +112,24 @@ Le tableau ci-dessus décrit les procédures génériques par type d'incident. C
 
 Cet incident constitue une preuve opérationnelle, non simulée, du mécanisme de réexécution des tâches décrit en 5bis.5 : le checkpoint Spark a permis une reprise exacte au point d'interruption, sur un cas réel de production plutôt qu'un test provoqué.
 
+**Effet de bord détecté et corrigé — cohérence checkpoint/topic après redémarrage complet.**
+
+L'action corrective décrite ci-dessus (`docker compose down && up -d`) a résolu le blocage d'écriture sur `station_status`/CLEAN, mais a eu un effet de bord non anticipé : elle a réinitialisé les topics Kafka sous-jacents (les offsets disponibles sont repartis d'une valeur basse), rendant incohérents les checkpoints du job RAW (`velib-spark`), qui référençaient encore les anciens offsets.
+
+**Chronologie du second épisode :**
+
+| Horodatage | Événement |
+|---|---|
+| 2026-07-04 01:01 | Redémarrage complet effectué (cf. 5.1), job CLEAN/CURATED repris avec succès |
+| 2026-07-04 ~01:05 | Contrôle de routine : le conteneur `velib-spark` (job RAW) est constaté `Exited (1)` |
+| 2026-07-04 ~01:06 | Diagnostic : `docker logs velib-spark` révèle une `StreamingQueryException` — `Partition velib.station_information-0's offset was changed from 272492 to 1500, some data may have been missed` |
+| 2026-07-04 ~01:14 | Correction ciblée du topic `station_information` (purge du checkpoint), mais **récidive** sur `station_status` au redémarrage (`offset changed from 2752695 to 4500`) — preuve que l'incohérence touchait l'ensemble des topics, pas un seul |
+| 2026-07-04 ~01:18 | Purge complète des checkpoints RAW pour les trois topics (`station_information`, `station_status`, `weather`) |
+| 2026-07-04 01:20:26 | Redémarrage de `velib-spark` : les trois requêtes de streaming repartent sans exception |
+| 2026-07-04 01:21:05 | Premier commit de checkpoint confirmé (`0`), pipeline RAW pleinement opérationnel |
+
+**Enseignement retenu :** Spark Structured Streaming refuse par défaut de continuer un flux si l'offset
+
 ## 5bis. Plan de récupération des données (Disaster Recovery)
 
 Le runbook d'incidents (§5) couvre les pannes où la donnée reste intègre (pod redémarré, pipeline relancé). Cette section couvre le scénario distinct où la **donnée elle-même est perdue ou corrompue** — perte de volume, suppression accidentelle d'un bucket, corruption disque — conformément à l'exigence de la grille sur les *« plans de récupération des données »*.
