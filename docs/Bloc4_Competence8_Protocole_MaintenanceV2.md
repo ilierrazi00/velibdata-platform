@@ -20,7 +20,7 @@ Ce document définit le protocole de maintenance de la plateforme VélibData dan
 | Messagerie | Apache Kafka 3.9.0 (KRaft) | Bus d'ingestion temps réel |
 | Traitement | Apache Spark 3.5.3 (streaming + batch) | RAW→CLEAN→CURATED |
 | Stockage | MinIO (zones RAW / CLEAN / CURATED) | Data Lake objet S3-compatible |
-| Orchestration | Kubernetes + KEDA | Distribution, self-healing, autoscaling |
+| Orchestration | Kubernetes + KEDA | Distribution, self-healing ; démonstration d'autoscaling sur déploiement représentatif (cf. §4ter) |
 | Qualité | Great Expectations | Validation des règles de données |
 | Supervision | Prometheus + Kafka exporter + Grafana | Métriques et alertes |
 | Sources | Producers Python (Vélib' dispo, stations, météo) | Collecte API |
@@ -79,6 +79,8 @@ Conformément à l'exigence de justification de la compétence 2, les choix de c
 L'autoscaling KEDA (1→4 pods) porte exclusivement sur les **workers Spark**, qui sont des composants de calcul *stateless* : ils ne persistent aucune donnée localement, et leur duplication ou destruction ne pose donc aucun risque d'incohérence — chaque nouveau pod reprend simplement sa part de traitement depuis Kafka (offsets) ou depuis le Data Lake, sans état à synchroniser entre instances.
 
 La donnée elle-même n'est jamais répliquée par l'autoscaling : elle réside exclusivement dans MinIO, dont la réplication est gérée séparément et en continu par le `StatefulSet` à 4 réplicas fixes (cf. compétences 1 et 2), avec intégrité garantie par les mécanismes S3 natifs (checksums/ETag, cf. §4.5.1). Ce découplage est un choix d'architecture délibéré : **ne jamais scaler la couche de stockage à la volée** évite précisément les problèmes classiques de cohérence qu'impliquerait la réplication dynamique d'une base de données pendant un événement de charge (fenêtres d'incohérence, conflits d'écriture concurrente). La compétence de « maîtrise du partage de la donnée » exigée par la grille est ainsi assurée en amont, au niveau du stockage stable, plutôt qu'au niveau des workers éphémères qui, eux, n'ont par nature aucune donnée à protéger.
+
+*Précision de périmètre : la démonstration d'autoscaling KEDA (1→4 pods) s'effectue sur un déploiement Kubernetes représentatif (`velib-worker`), distinct du job Spark réel qui tourne en Docker Compose (cf. §2). Ce choix isole la preuve du mécanisme d'orchestration de l'infrastructure de production, sans coupler cette dernière à l'environnement de démonstration K8s. En production, le même mécanisme s'appliquerait au job réel, avec le lag Kafka comme déclencheur plutôt que le CPU générique utilisé ici.*
 
 ## 5. Maintenance corrective (runbook d'incidents)
 
