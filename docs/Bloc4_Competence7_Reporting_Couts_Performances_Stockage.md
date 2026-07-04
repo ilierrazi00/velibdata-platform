@@ -111,6 +111,26 @@ La zone CLEAN contient **44 757 fichiers Parquet** pour un volume de 229 Mio, so
 
 **Impact :** ralentissement des opérations de listing objet, surcoût de métadonnées Parquet, dégradation des temps de requête analytique.
 
+### 5.1 bis — Remédiation appliquée : compaction de la zone CLEAN
+
+Le small files problem décrit ci-dessus a fait l'objet d'une **remédiation effective**, mesurée sur le topic `station_status`.
+
+**Cause racine confirmée dans le code.** Le traitement CLEAN est un Spark Structured Streaming en mode `append` avec micro-batch toutes les 30 secondes (`trigger(processingTime="30 seconds")` dans `clean_processing.py`). Ce mode, nécessaire au temps réel, génère un nouveau lot de part-files à chaque déclenchement.
+
+**Action.** Un job de compaction dédié (`spark/compaction_clean.py`) relit l'intégralité de la zone CLEAN du topic, regroupe les données via `repartition(4)` et les réécrit en Parquet Snappy dans une zone `clean-compacted`. Il s'exécute dans un conteneur Spark isolé (driver 4 Go), sans impact sur le pipeline de production qui continue en parallèle.
+
+**Résultat mesuré (avant / après) :**
+
+| Indicateur | Avant (`clean/station_status`) | Après (`clean-compacted/station_status`) | Gain |
+|---|---|---|---|
+| Nombre d'objets | 106 153 | 5 | **−99,995 %** |
+| Taille totale | 546 Mio | 19 Mio | **−96,5 %** |
+| Taille moyenne / fichier | ≈ 5,4 Kio | ≈ 4,8 Mio | **×900** |
+
+Le gain est double. La réduction du nombre de fichiers (106 153 → 5) allège la couche métadonnées et accélère les lectures. La réduction de volume (546 → 19 Mio) provient d'une bien meilleure efficacité de la compression Snappy sur des fichiers pleins plutôt que sur des milliers de part-files de quelques kilo-octets, et de l'élimination de la redondance temporelle du streaming append.
+
+**Industrialisation.** Ce job est conçu pour être planifié en tâche de maintenance périodique (CronJob nocturne), sur le modèle de la rétention automatique de la zone RAW (`velib-retention-raw`). La mesure présentée ici correspond à son exécution de validation sur la zone CLEAN réelle.
+
 ### 5.2 Accumulation des fichiers de checkpoint
 
 La zone CLEAN comporte **35 651 fichiers de checkpoint** (`_checkpoint/commits`, `_checkpoint/offsets`), de 29 à 656 octets chacun, accumulés au fil des jours de streaming. Ces fichiers sont nécessaires à la reprise sur incident de Spark, mais leur nombre croît indéfiniment sans purge.
@@ -143,7 +163,7 @@ Le coût direct de la solution est dominé par l'absence de licence et l'héberg
 
 | # | Anomalie | Action corrective recommandée | Lien |
 |---|---|---|---|
-| 1 | Small files (45 k fichiers en CLEAN) | Job de **compaction** périodique (réécriture / `coalesce` / OPTIMIZE) pour regrouper les petits fichiers | Comp. 8 |
+| 1 | Small files (CLEAN) | Job de **compaction réalisé et mesuré** (`compaction_clean.py`) : 106 153 → 5 objets sur `station_status` (voir §5.1 bis). À planifier en CronJob nocturne pour l'industrialisation. | §5.1 bis / Comp. 8 |
 | 2 | Checkpoints accumulés (35 k) | Mise en place d'une **purge des checkpoints** obsolètes et/ou rotation | Comp. 8 |
 | 3 | Répertoire `_temporary` orphelin | **Nettoyage des répertoires de staging** orphelins | Comp. 8 |
 | 4 | PVC sous-dimensionnés (1 Gio) | **Redimensionnement** des volumes et alerte sur seuil de remplissage (déjà supervisé via Prometheus/Grafana) | Comp. 5 / 8 |
@@ -154,7 +174,7 @@ Ces actions sont consignées dans le protocole de maintenance (compétence 8), q
 
 Le stockage de VélibData est **économiquement pérenne** (licences nulles, coût de support négligeable, conformité RGPD par localisation locale) et **techniquement performant** (format Parquet+Snappy mesuré 4,8× plus compact que le JSON brut). L'architecture est **évolutive** par conception (MinIO distribué + autoscaling KEDA).
 
-Le contrôle a néanmoins mis en évidence un enjeu de **maintenance préventive** — le *small files problem* et l'accumulation de fichiers techniques — qui n'altère pas le service mais doit être traité pour garantir la durabilité des performances. Ce constat constitue l'entrée directe du protocole de maintenance (compétence 8).
+Le contrôle a néanmoins mis en évidence un enjeu de **maintenance préventive** — le *small files problem* et l'accumulation de fichiers techniques. Le small files problem a d'ores et déjà fait l'objet d'une **remédiation effective et mesurée** (compaction de la zone CLEAN, −99,995 % d'objets et −96,5 % de volume, voir §5.1 bis) ; les autres points alimentent le protocole de maintenance (compétence 8) pour garantir la durabilité des performances.
 
 ---
 
