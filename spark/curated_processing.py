@@ -46,9 +46,13 @@ def build_curated():
         .drop("rn")
     )
 
+    # Référentiel stations mis en cache (réutilisé à chaque batch)
+    # -> équivalent "mise en cache des fichiers avant insertion" (comp. 5)
+    ref_stations = info.select("stationcode", "name", "latitude", "longitude").cache()
+
     # Jointure disponibilité + référentiel stations
     joined = latest_status.join(
-        info.select("stationcode", "name", "latitude", "longitude"),
+        ref_stations,
         on="stationcode", how="left",
     )
 
@@ -86,11 +90,23 @@ while True:
                 least(col("taux_occupation"), lit(100.0))
             )
         )
+        # Comptage AVANT écriture (référence d'intégrité)
+        nb_ecrit = curated.count()
+
         (
             curated.write.mode("overwrite")
             .parquet("s3a://curated/stations_enrichies")
         )
-        print("CURATED mis à jour : %d stations" % curated.count())
+
+        # Vérification d'intégrité post-écriture (équivalent "somme de contrôle", comp. 5)
+        # On relit ce qui vient d'être écrit et on compare le nombre de lignes.
+        nb_relu = spark.read.parquet("s3a://curated/stations_enrichies").count()
+        if nb_ecrit == nb_relu:
+            print("CURATED mis à jour : %d stations - integrite OK (ecrit=%d, relu=%d)"
+                  % (nb_relu, nb_ecrit, nb_relu))
+        else:
+            print("ALERTE INTEGRITE CURATED : ecart detecte (ecrit=%d, relu=%d)"
+                  % (nb_ecrit, nb_relu))
     except Exception as e:
         print("Erreur CURATED : %s" % e)
     time.sleep(BATCH_INTERVAL)
