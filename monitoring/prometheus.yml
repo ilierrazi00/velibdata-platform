@@ -1,14 +1,17 @@
-global:
+﻿global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
-scrape_configs:
-  # Prometheus se surveille lui-même
-  - job_name: 'prometheus'
-    static_configs:
-      - targets: ['localhost:9090']
+rule_files:
+  - "/etc/prometheus/alert.rules.yml"
 
-  # Métriques Kafka via kafka-exporter
-  - job_name: 'kafka'
+scrape_configs:
+  # Prometheus se surveille lui-meme
+  - job_name: "prometheus"
     static_configs:
-      - targets: ['kafka-exporter:9308']
+      - targets: ["localhost:9090"]
+
+  # Metriques Kafka via kafka-exporter
+  - job_name: "kafka"
+    static_configs:
+      - targets: ["kafka-exporter:9308"]

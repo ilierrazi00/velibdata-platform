@@ -1,0 +1,35 @@
+﻿groups:
+  - name: velib_pipeline_alerts
+    rules:
+      # --- Alerte phare : ingestion figee (offsets Kafka n'avancent plus) ---
+      - alert: VelibIngestionStopped
+        expr: sum by (topic) (increase(kafka_topic_partition_current_offset{topic="velib.station_status"}[5m])) == 0
+        for: 2m
+        labels:
+          severity: critical
+          composant: ingestion
+        annotations:
+          summary: "Ingestion Velib figee (topic {{ $labels.topic }})"
+          description: "Aucun nouveau message sur {{ $labels.topic }} depuis plus de 5 min. Producers ou broker Kafka bloques - pipeline gele."
+
+      # --- Exporter / Kafka injoignable ---
+      - alert: VelibKafkaExporterDown
+        expr: up{job="kafka"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          composant: monitoring
+        annotations:
+          summary: "kafka-exporter injoignable"
+          description: "Prometheus ne scrape plus kafka-exporter (job=kafka) depuis 2 min. Supervision Kafka aveugle."
+
+      # --- Aucun broker Kafka actif ---
+      - alert: VelibKafkaBrokerDown
+        expr: kafka_brokers < 1
+        for: 2m
+        labels:
+          severity: critical
+          composant: kafka
+        annotations:
+          summary: "Aucun broker Kafka actif"
+          description: "Le cluster Kafka ne rapporte aucun broker disponible depuis 2 min. Ingestion et traitement a l'arret."
