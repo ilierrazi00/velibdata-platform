@@ -1,43 +1,42 @@
 name: CI - VélibData Platform
-
-# Déclencheurs : à chaque push et chaque pull request sur main
-on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+on: [push]
 
 jobs:
-  lint-and-test:
-    name: Validation du code Python
+  validate-project:
     runs-on: ubuntu-latest
-
     steps:
-      # 1. Récupérer le code du dépôt
-      - name: Checkout du code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # 2. Installer Python
-      - name: Installer Python 3.12
+      - name: Check Docker Compose configuration
+        run: docker compose config
+
+      - name: Validate Python syntax
+        run: python -m py_compile $(git ls-files '*.py')
+
+      - name: Check required project files
+        run: test -f docker-compose.yml
+
+      - name: Check documentation files
+        run: test -f docs/runbook_maintenance.md
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.11"
 
-      # 3. Installer les dépendances + outils de qualité
-      - name: Installer les dépendances
-        run: |
-          python -m pip install --upgrade pip
-          pip install flake8 pytest
-          pip install -r producers/requirements.txt
+      - name: Set up Java 17 (requis par Spark 3.5.3)
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
 
-      # 4. Vérifier la syntaxe et la qualité du code (lint)
-      - name: Lint avec flake8
-        run: |
-          # Erreurs critiques uniquement (syntaxe, imports cassés)
-          flake8 producers/ spark/ --count --select=E9,F63,F7,F82 --show-source --statistics
+      - name: Install test dependencies
+        run: pip install -r requirements-test.txt
 
-      # 5. Vérifier que les scripts se compilent sans erreur
-      - name: Vérifier la compilation des scripts
-        run: |
-          python -m py_compile producers/*.py spark/*.py
-          echo "Tous les scripts Python compilent correctement."
+      - name: Run unit tests (schema, transformation, quality)
+        run: python -m pytest tests/ -v
