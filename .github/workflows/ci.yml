@@ -22,7 +22,9 @@ jobs:
         run: test -f docker-compose.yml
 
       - name: Check documentation files
-        run: test -f docs/runbook_maintenance.md
+        run: |
+          test -f docs/Bloc4_Competence8_Protocole_MaintenanceV2.md
+          test -f docs/Bloc4_Competence8_Guide_Documentation_Technique.md
 
   unit-tests:
     runs-on: ubuntu-latest
