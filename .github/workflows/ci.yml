@@ -7,6 +7,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Create placeholder .env for validation
+        run: |
+          echo "MINIO_ROOT_USER=ci-user" > .env
+          echo "MINIO_ROOT_PASSWORD=ci-placeholder" >> .env
+
       - name: Check Docker Compose configuration
         run: docker compose config
 
