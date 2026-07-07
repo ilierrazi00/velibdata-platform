@@ -31,3 +31,4 @@ evidence/
 .pytest_cache/
 __pycache__/
 *.pyc
+resultats_integrite_compaction.txt
