@@ -1,7 +1,6 @@
-﻿groups:
+groups:
   - name: velib_pipeline_alerts
     rules:
-      # --- Alerte phare : ingestion figee (offsets Kafka n'avancent plus) ---
       - alert: VelibIngestionStopped
         expr: sum by (topic) (increase(kafka_topic_partition_current_offset{topic="velib.station_status"}[5m])) == 0
         for: 2m
@@ -10,26 +9,130 @@
           composant: ingestion
         annotations:
           summary: "Ingestion Velib figee (topic {{ $labels.topic }})"
-          description: "Aucun nouveau message sur {{ $labels.topic }} depuis plus de 5 min. Producers ou broker Kafka bloques - pipeline gele."
+          description: "Aucun nouveau message sur {{ $labels.topic }} depuis plus de 5 minutes. Verifier le producer, Kafka et le traitement Spark."
 
-      # --- Exporter / Kafka injoignable ---
       - alert: VelibKafkaExporterDown
         expr: up{job="kafka"} == 0
-        for: 2m
+        for: 30s
         labels:
           severity: critical
           composant: monitoring
         annotations:
           summary: "kafka-exporter injoignable"
-          description: "Prometheus ne scrape plus kafka-exporter (job=kafka) depuis 2 min. Supervision Kafka aveugle."
+          description: "Prometheus ne collecte plus les metriques Kafka depuis 30 secondes."
 
-      # --- Aucun broker Kafka actif ---
       - alert: VelibKafkaBrokerDown
         expr: kafka_brokers < 1
-        for: 2m
+        for: 30s
         labels:
           severity: critical
           composant: kafka
         annotations:
           summary: "Aucun broker Kafka actif"
-          description: "Le cluster Kafka ne rapporte aucun broker disponible depuis 2 min. Ingestion et traitement a l'arret."
+          description: "Le cluster Kafka ne rapporte aucun broker disponible."
+
+  - name: velib_storage_alerts
+    rules:
+      - alert: VelibMinioDown
+        expr: up{job="minio-cluster"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          composant: minio
+        annotations:
+          summary: "MinIO n'est plus scrape par Prometheus"
+          description: "Le endpoint de metriques MinIO est indisponible depuis 30 secondes."
+
+      - alert: VelibMinioNodeOffline
+        expr: max(minio_cluster_nodes_offline_total) > 0
+        for: 1m
+        labels:
+          severity: critical
+          composant: minio
+        annotations:
+          summary: "Au moins un noeud MinIO est hors ligne"
+          description: "MinIO rapporte {{ $value }} noeud(s) hors ligne."
+
+      - alert: VelibMinioStorageAlmostFull
+        expr: 100 * max(minio_cluster_usage_total_bytes) / max(minio_cluster_capacity_usable_total_bytes) > 80
+        for: 5m
+        labels:
+          severity: warning
+          composant: minio
+        annotations:
+          summary: "Capacite MinIO superieure a 80 pour cent"
+          description: "Le stockage MinIO utilise {{ $value | printf \"%.1f\" }} pour cent de sa capacite utilisable."
+
+      - alert: VelibMinioDriveOffline
+        expr: max(minio_cluster_drive_offline_total) > 0
+        for: 1m
+        labels:
+          severity: critical
+          composant: minio
+        annotations:
+          summary: "Un disque MinIO est hors ligne"
+          description: "MinIO rapporte {{ $value }} disque(s) hors ligne."
+
+  - name: velib_resources_alerts
+    rules:
+      - alert: VelibCadvisorDown
+        expr: up{job="cadvisor"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          composant: ressources
+        annotations:
+          summary: "cAdvisor est indisponible"
+          description: "Prometheus ne collecte plus les metriques CPU et memoire des conteneurs."
+
+      - alert: VelibContainerHighCPU
+        expr: |
+          sum by (container_label_com_docker_compose_service) (
+            rate(container_cpu_usage_seconds_total{
+              job="cadvisor",
+              container_label_com_docker_compose_service!=""
+            }[2m])
+          ) * 100 > 85
+        for: 3m
+        labels:
+          severity: warning
+          composant: ressources
+        annotations:
+          summary: "CPU eleve pour {{ $labels.container_label_com_docker_compose_service }}"
+          description: "Le service depasse 85 pour cent de CPU depuis 3 minutes ({{ $value | printf \"%.1f\" }} pour cent)."
+
+      - alert: VelibContainerHighMemory
+        expr: |
+          sum by (container_label_com_docker_compose_service) (
+            container_memory_working_set_bytes{
+              job="cadvisor",
+              container_label_com_docker_compose_service!=""
+            }
+          ) > 1610612736
+        for: 5m
+        labels:
+          severity: warning
+          composant: ressources
+        annotations:
+          summary: "Memoire elevee pour {{ $labels.container_label_com_docker_compose_service }}"
+          description: "Le service utilise plus de 1,5 Gio de memoire depuis 5 minutes."
+
+      - alert: VelibAlertmanagerDown
+        expr: up{job="alertmanager"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          composant: monitoring
+        annotations:
+          summary: "Alertmanager est indisponible"
+          description: "Les alertes Prometheus ne peuvent plus etre routees vers les notifications."
+
+      - alert: VelibPrometheusRuleEvaluationFailures
+        expr: increase(prometheus_rule_evaluation_failures_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          composant: monitoring
+        annotations:
+          summary: "Echec d'evaluation d'une regle Prometheus"
+          description: "Prometheus a rencontre au moins un echec d'evaluation de regle dans les 5 dernieres minutes."

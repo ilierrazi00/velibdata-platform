@@ -46,6 +46,7 @@ services:
     environment:
       - MINIO_ROOT_USER=${MINIO_ROOT_USER}
       - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      - MINIO_PROMETHEUS_AUTH_TYPE=public
     command: server /data --console-address ":9001"
     volumes:
       - minio-data:/data
@@ -186,17 +187,79 @@ services:
       kafka:
         condition: service_healthy
 
-  # --- Prometheus (collecte des métriques) ---
+  # --- cAdvisor (CPU, mémoire, réseau et fichiers des conteneurs) ---
+  cadvisor:
+    image: ghcr.io/google/cadvisor:v0.60.3
+    container_name: velib-cadvisor
+    privileged: true
+    pid: host
+    ports:
+      - "8081:8080"
+    command:
+      - "--docker_only=true"
+      - "--housekeeping_interval=10s"
+      - "--store_container_labels=true"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    devices:
+      - /dev/kmsg
+    restart: unless-stopped
+
+  # --- Récepteur local des notifications Alertmanager (preuve automatique) ---
+  alert-webhook:
+    image: python:3.12-alpine
+    container_name: velib-alert-webhook
+    command: ["python", "/app/webhook_receiver.py"]
+    environment:
+      - ALERT_LOG=/data/monitoring-alerts.jsonl
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./monitoring/webhook_receiver.py:/app/webhook_receiver.py:ro
+      - ./evidence:/data
+    restart: unless-stopped
+
+  # --- Alertmanager (groupement, routage et notifications automatiques) ---
+  alertmanager:
+    image: quay.io/prometheus/alertmanager:v0.33.1
+    container_name: velib-alertmanager
+    ports:
+      - "9093:9093"
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    depends_on:
+      - alert-webhook
+    restart: unless-stopped
+
+  # --- Prometheus (Kafka, MinIO, CPU/mémoire, règles d'alerte) ---
   prometheus:
     image: prom/prometheus:latest
     container_name: velib-prometheus
     ports:
       - "9090:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-lifecycle"
     volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
-      - ./monitoring/alert.rules.yml:/etc/prometheus/alert.rules.yml
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alert.rules.yml:/etc/prometheus/alert.rules.yml:ro
+      - prometheus-data:/prometheus
     depends_on:
       - kafka-exporter
+      - minio
+      - cadvisor
+      - alertmanager
+    restart: unless-stopped
 
   # --- Grafana (dashboards de supervision) ---
   grafana:
@@ -205,8 +268,8 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=velibadmin
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-velibadmin}
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - grafana-data:/var/lib/grafana
@@ -214,6 +277,7 @@ services:
       - ./monitoring/grafana/dashboards:/etc/grafana/dashboards
     depends_on:
       - prometheus
+      - alertmanager
 
   # --- Great Expectations (tests qualité des données) ---
   great-expectations:
@@ -230,3 +294,5 @@ volumes:
   minio-data:
   spark-ivy:
   grafana-data:
+  prometheus-data:
+  alertmanager-data:

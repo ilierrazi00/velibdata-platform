@@ -1,54 +1,105 @@
 {
-  "annotations": { "list": [] },
+  "annotations": {"list": []},
   "editable": true,
   "panels": [
     {
-      "title": "Messages totaux par topic",
-      "type": "stat",
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
-      "targets": [
-        { "expr": "kafka_topic_partition_current_offset", "legendFormat": "{{topic}}" }
-      ],
-      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" } } }
-    },
-    {
-      "title": "Débit d'ingestion (messages/sec par topic)",
-      "type": "timeseries",
-      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 0 },
-      "targets": [
-        { "expr": "rate(kafka_topic_partition_current_offset[1m])", "legendFormat": "{{topic}}" }
-      ]
-    },
-    {
-      "title": "Consumer lag (retard de traitement)",
-      "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
-      "targets": [
-        { "expr": "kafka_consumergroup_lag", "legendFormat": "{{consumergroup}} - {{topic}}" }
-      ]
-    },
-    {
-      "title": "Nombre de topics",
-      "type": "stat",
-      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 8 },
-      "targets": [
-        { "expr": "count(count by (topic) (kafka_topic_partitions))" }
-      ]
-    },
-    {
       "title": "Brokers Kafka actifs",
       "type": "stat",
-      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 8 },
+      "gridPos": {"h": 5, "w": 4, "x": 0, "y": 0},
+      "targets": [{"expr": "kafka_brokers", "refId": "A"}],
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}}
+    },
+    {
+      "title": "Noeuds MinIO en ligne",
+      "type": "stat",
+      "gridPos": {"h": 5, "w": 4, "x": 4, "y": 0},
+      "targets": [{"expr": "max(minio_cluster_nodes_online_total)", "refId": "A"}],
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}}
+    },
+    {
+      "title": "Noeuds MinIO hors ligne",
+      "type": "stat",
+      "gridPos": {"h": 5, "w": 4, "x": 8, "y": 0},
+      "targets": [{"expr": "max(minio_cluster_nodes_offline_total)", "refId": "A"}],
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}}
+    },
+    {
+      "title": "Stockage MinIO utilise",
+      "type": "stat",
+      "gridPos": {"h": 5, "w": 4, "x": 12, "y": 0},
+      "targets": [{"expr": "max(minio_cluster_usage_total_bytes)", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "bytes"}}
+    },
+    {
+      "title": "Objets MinIO",
+      "type": "stat",
+      "gridPos": {"h": 5, "w": 4, "x": 16, "y": 0},
+      "targets": [{"expr": "max(minio_cluster_usage_object_total)", "refId": "A"}]
+    },
+    {
+      "title": "Alertes actives",
+      "type": "stat",
+      "gridPos": {"h": 5, "w": 4, "x": 20, "y": 0},
+      "targets": [{"expr": "count(ALERTS{alertstate=\"firing\"})", "refId": "A"}],
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}}
+    },
+    {
+      "title": "CPU des conteneurs par service (%)",
+      "type": "timeseries",
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 5},
+      "targets": [{
+        "expr": "sum by (container_label_com_docker_compose_service) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_service!=\"\"}[1m])) * 100",
+        "legendFormat": "{{container_label_com_docker_compose_service}}",
+        "refId": "A"
+      }],
+      "fieldConfig": {"defaults": {"unit": "percent"}}
+    },
+    {
+      "title": "Memoire des conteneurs par service",
+      "type": "timeseries",
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 5},
+      "targets": [{
+        "expr": "sum by (container_label_com_docker_compose_service) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_service!=\"\"})",
+        "legendFormat": "{{container_label_com_docker_compose_service}}",
+        "refId": "A"
+      }],
+      "fieldConfig": {"defaults": {"unit": "bytes"}}
+    },
+    {
+      "title": "Debit d'ingestion Kafka (messages/s)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14},
+      "targets": [{"expr": "sum by (topic) (rate(kafka_topic_partition_current_offset[1m]))", "legendFormat": "{{topic}}", "refId": "A"}]
+    },
+    {
+      "title": "Consumer lag Kafka",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 14},
+      "targets": [{"expr": "sum by (consumergroup, topic) (kafka_consumergroup_lag)", "legendFormat": "{{consumergroup}} / {{topic}}", "refId": "A"}]
+    },
+    {
+      "title": "Disponibilite des cibles Prometheus",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 22},
+      "targets": [{"expr": "up", "legendFormat": "{{job}} / {{instance}}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"min": 0, "max": 1}}
+    },
+    {
+      "title": "Trafic S3 MinIO",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 22},
       "targets": [
-        { "expr": "kafka_brokers" }
-      ]
+        {"expr": "rate(minio_s3_traffic_received_bytes[1m])", "legendFormat": "recu", "refId": "A"},
+        {"expr": "rate(minio_s3_traffic_sent_bytes[1m])", "legendFormat": "envoye", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "Bps"}}
     }
   ],
   "refresh": "10s",
   "schemaVersion": 39,
-  "tags": ["velib", "kafka"],
-  "time": { "from": "now-1h", "to": "now" },
-  "title": "VélibData — Supervision Pipeline",
+  "tags": ["velib", "kafka", "minio", "cadvisor", "alertmanager"],
+  "time": {"from": "now-1h", "to": "now"},
+  "title": "VelibData - Monitoring complet",
   "uid": "velib-main",
-  "version": 1
+  "version": 2
 }

@@ -66,3 +66,18 @@ powershell -ExecutionPolicy Bypass -File .\scripts\cicd-local.ps1
 ```
 
 La stack de test est isolée dans `docker-compose.smoke.yml` et produit un rapport horodaté dans `evidence/`.
+
+## Monitoring complet et alertes automatiques
+
+Le monitoring couvre Kafka, MinIO, CPU/mémoire des conteneurs, Prometheus et Alertmanager.
+
+```powershell
+# Démarrer les composants de supervision
+
+docker compose up -d minio kafka kafka-exporter cadvisor alert-webhook alertmanager prometheus grafana
+
+# Exécuter le test automatique FIRING puis RESOLVED
+powershell -ExecutionPolicy Bypass -File .\scripts\test-monitoring-alerts.ps1
+```
+
+Interfaces : Grafana `http://localhost:3000`, Prometheus `http://localhost:9090`, Alertmanager `http://localhost:9093`, cAdvisor `http://localhost:8081`.
