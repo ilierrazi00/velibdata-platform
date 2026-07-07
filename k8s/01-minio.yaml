@@ -1,34 +1,30 @@
-# Secret contenant les identifiants MinIO
-apiVersion: v1
-kind: Secret
-metadata:
-  name: minio-creds
-  namespace: velibdata
-type: Opaque
-stringData:
-  MINIO_ROOT_USER: velibadmin
-  MINIO_ROOT_PASSWORD: Velib2026SecureLake
----
-# Service headless (nécessaire pour le StatefulSet distribué)
+# MinIO distribué à 4 pods.
+# Le secret minio-creds doit être créé séparément depuis .env :
+#   powershell -ExecutionPolicy Bypass -File scripts/create-k8s-secret.ps1
 apiVersion: v1
 kind: Service
 metadata:
   name: minio-headless
   namespace: velibdata
+  labels:
+    app: minio
 spec:
   clusterIP: None
+  publishNotReadyAddresses: true
   selector:
     app: minio
   ports:
     - name: api
       port: 9000
+      targetPort: 9000
 ---
-# Service d'accès (console + API)
 apiVersion: v1
 kind: Service
 metadata:
   name: minio
   namespace: velibdata
+  labels:
+    app: minio
 spec:
   selector:
     app: minio
@@ -40,26 +36,32 @@ spec:
       port: 9001
       targetPort: 9001
 ---
-# StatefulSet MinIO distribué : 4 pods répliqués
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: minio
   namespace: velibdata
+  labels:
+    app: minio
 spec:
   serviceName: minio-headless
+  podManagementPolicy: Parallel
   replicas: 4
   selector:
     matchLabels:
       app: minio
+  updateStrategy:
+    type: RollingUpdate
   template:
     metadata:
       labels:
         app: minio
     spec:
+      terminationGracePeriodSeconds: 30
       containers:
         - name: minio
           image: minio/minio:latest
+          imagePullPolicy: IfNotPresent
           args:
             - server
             - http://minio-{0...3}.minio-headless.velibdata.svc.cluster.local/data
@@ -68,15 +70,54 @@ spec:
           envFrom:
             - secretRef:
                 name: minio-creds
+          env:
+            # Mode public acceptable uniquement pour ce démonstrateur local.
+            # En production, utiliser un jeton Prometheus à privilèges minimaux.
+            - name: MINIO_PROMETHEUS_AUTH_TYPE
+              value: public
           ports:
-            - containerPort: 9000
-            - containerPort: 9001
+            - name: api
+              containerPort: 9000
+            - name: console
+              containerPort: 9001
+          startupProbe:
+            httpGet:
+              path: /minio/health/live
+              port: api
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: api
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: api
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
           volumeMounts:
             - name: data
               mountPath: /data
   volumeClaimTemplates:
     - metadata:
         name: data
+        labels:
+          app: minio
       spec:
         accessModes: ["ReadWriteOnce"]
         resources:

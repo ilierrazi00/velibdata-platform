@@ -1,49 +1,169 @@
-name: CI - VélibData Platform
-on: [push]
+﻿name: CI et deploiement de validation - VelibData
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: velibdata-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MINIO_ROOT_USER: ci-velib-admin
+  MINIO_ROOT_PASSWORD: CI_VelibData_2026_Strong!
+  OWM_API_KEY: ci-placeholder-not-used
+  GRAFANA_ADMIN_PASSWORD: CI_Grafana_2026_Strong!
 
 jobs:
   validate-project:
-    runs-on: ubuntu-latest
+    name: 1 - Validation statique
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Recuperer le depot
+        uses: actions/checkout@v6
 
-      - name: Create placeholder .env for validation
+      - name: Creer le fichier .env de CI
         run: |
-          echo "MINIO_ROOT_USER=ci-user" > .env
-          echo "MINIO_ROOT_PASSWORD=ci-placeholder" >> .env
+          cat > .env <<EOF
+          MINIO_ROOT_USER=${MINIO_ROOT_USER}
+          MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+          OWM_API_KEY=${OWM_API_KEY}
+          GRAFANA_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+          EOF
 
-      - name: Check Docker Compose configuration
-        run: docker compose config
-
-      - name: Validate Python syntax
-        run: python -m py_compile $(git ls-files '*.py')
-
-      - name: Check required project files
-        run: test -f docker-compose.yml
-
-      - name: Check documentation files
+      - name: Valider les fichiers Docker Compose
         run: |
+          docker compose config --quiet
+          docker compose --file docker-compose.smoke.yml config --quiet
+
+      - name: Valider la syntaxe Python
+        run: |
+          git ls-files -z '*.py' | xargs -0 -r -n 1 python -m py_compile
+
+      - name: Verifier les fichiers obligatoires
+        run: |
+          test -f docker-compose.yml
+          test -f docker-compose.smoke.yml
+          test -f scripts/ci-smoke-tests.sh
+          test -f scripts/smoke-tests.ps1
           test -f docs/Bloc4_Competence8_Protocole_MaintenanceV2.md
           test -f docs/Bloc4_Competence8_Guide_Documentation_Technique.md
 
   unit-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+    name: 2 - Tests unitaires Spark
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+    steps:
+      - name: Recuperer le depot
+        uses: actions/checkout@v6
+
+      - name: Installer Python 3.11
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
 
-      - name: Set up Java 17 (requis par Spark 3.5.3)
-        uses: actions/setup-java@v4
+      - name: Installer Java 17 pour Spark 3.5.3
+        uses: actions/setup-java@v5
         with:
-          distribution: "temurin"
+          distribution: temurin
           java-version: "17"
 
-      - name: Install test dependencies
-        run: pip install -r requirements-test.txt
+      - name: Installer les dependances de test
+        run: python -m pip install --upgrade pip && pip install -r requirements-test.txt
 
-      - name: Run unit tests (schema, transformation, quality)
-        run: python -m pytest tests/ -v
+      - name: Executer les tests unitaires
+        run: |
+          mkdir -p evidence
+          python -m pytest tests/ -v --junitxml=evidence/pytest-results.xml | tee evidence/pytest-output.txt
+
+      - name: Publier les preuves des tests unitaires
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: velibdata-unit-tests-${{ github.run_number }}
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
+
+  docker-build-and-smoke:
+    name: 3 - Build Docker et smoke tests
+    needs: [validate-project, unit-tests]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Recuperer le depot
+        uses: actions/checkout@v6
+
+      - name: Creer le fichier .env de CI
+        run: |
+          cat > .env <<EOF
+          MINIO_ROOT_USER=${MINIO_ROOT_USER}
+          MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+          OWM_API_KEY=${OWM_API_KEY}
+          GRAFANA_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+          EOF
+          mkdir -p evidence
+
+      - name: Construire les images applicatives
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            echo "Build UTC: $(date -u --iso-8601=seconds)"
+            docker version
+            docker compose version
+            docker compose build --pull producer-availability producer-stations producer-weather great-expectations
+            docker compose images
+          } 2>&1 | tee evidence/docker-build.txt
+
+      - name: Tester les images construites sans appeler les API externes
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            docker compose run --rm --no-deps producer-availability \
+              python -m py_compile velib_availability.py velib_stations.py weather.py
+            docker compose run --rm --no-deps great-expectations \
+              python -m py_compile validate_quality.py
+            echo "CONTAINER IMAGE SMOKE : PASS"
+          } 2>&1 | tee evidence/container-image-smoke.txt
+
+      - name: Deployer la stack ephemere et executer les smoke tests
+        shell: bash
+        run: |
+          chmod +x scripts/ci-smoke-tests.sh
+          SMOKE_KEEP_RUNNING=false ./scripts/ci-smoke-tests.sh
+
+      - name: Collecter les journaux Docker en cas d'echec
+        if: failure()
+        shell: bash
+        run: |
+          docker compose --project-name velibdata-smoke --file docker-compose.smoke.yml ps > evidence/compose-ps-failure.txt 2>&1 || true
+          docker compose --project-name velibdata-smoke --file docker-compose.smoke.yml logs --no-color > evidence/compose-logs-failure.txt 2>&1 || true
+
+      - name: Nettoyage de securite
+        if: always()
+        shell: bash
+        run: |
+          docker compose --project-name velibdata-smoke --file docker-compose.smoke.yml down --volumes --remove-orphans || true
+          docker compose down --volumes --remove-orphans || true
+
+      - name: Publier les preuves build et smoke tests
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: velibdata-docker-smoke-${{ github.run_number }}
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
+

@@ -41,3 +41,28 @@ docker compose up -d --build
 - `producers/` — producers Python (3 sources)
 - `spark/` — jobs Spark (ingestion RAW, puis CLEAN/CURATED)
 - `docs/` — documentation et captures
+## Démonstration Kubernetes sécurisée et test de panne
+
+Les identifiants MinIO ne sont pas stockés dans les manifestes Kubernetes.
+
+```powershell
+# 1. Créer le secret depuis le .env local et déployer MinIO
+powershell -ExecutionPolicy Bypass -File scripts/deploy-minio-k8s.ps1
+
+# 2. Tester lecture, écriture et SHA-256 avec un pod indisponible
+powershell -ExecutionPolicy Bypass -File scripts/test-minio-resilience.ps1
+```
+
+Une preuve horodatée est créée dans `evidence/`.
+
+## CI et smoke tests automatiques
+
+Le workflow `.github/workflows/ci.yml` exécute : validation → tests unitaires → build Docker → déploiement temporaire → smoke tests → publication des preuves.
+
+Test local Windows :
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\cicd-local.ps1
+```
+
+La stack de test est isolée dans `docker-compose.smoke.yml` et produit un rapport horodaté dans `evidence/`.

@@ -16,3 +16,18 @@ Thumbs.db
 mc.exe
 sample_curated/
 sample_curated.zip
+
+# Tests / preuves locales
+.pytest_cache/
+evidence/*.bin
+evidence/*.tmp
+
+# Sauvegardes éditeur
+*.bak
+
+.env
+evidence/
+*.log
+.pytest_cache/
+__pycache__/
+*.pyc

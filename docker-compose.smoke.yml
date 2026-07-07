@@ -1,0 +1,99 @@
+name: velibdata-smoke
+
+services:
+  kafka:
+    image: apache/kafka:3.9.0
+    environment:
+      KAFKA_NODE_ID: 0
+      KAFKA_PROCESS_ROLES: controller,broker
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 10s
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "${SMOKE_MINIO_PORT:-19000}:9000"
+      - "${SMOKE_MINIO_CONSOLE_PORT:-19001}:9001"
+    volumes:
+      - smoke-minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 10s
+
+  minio-setup:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" >/dev/null
+        mc mb --ignore-existing local/raw
+        mc mb --ignore-existing local/clean
+        mc mb --ignore-existing local/curated
+        echo "Buckets RAW/CLEAN/CURATED prets"
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    command: ["--kafka.server=kafka:9092"]
+    ports:
+      - "${SMOKE_KAFKA_EXPORTER_PORT:-19308}:9308"
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    ports:
+      - "${SMOKE_PROMETHEUS_PORT:-19090}:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alert.rules.yml:/etc/prometheus/alert.rules.yml:ro
+    depends_on:
+      - kafka-exporter
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "${SMOKE_GRAFANA_PORT:-13000}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-Smoke_Grafana_2026!}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
+volumes:
+  smoke-minio-data:

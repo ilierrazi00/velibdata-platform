@@ -1,0 +1,12 @@
+# Protège le quorum contre les interruptions volontaires simultanées.
+# Ne protège pas contre la panne du nœud Docker Desktop unique.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: minio-pdb
+  namespace: velibdata
+spec:
+  minAvailable: 3
+  selector:
+    matchLabels:
+      app: minio
