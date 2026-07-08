@@ -1,0 +1,41 @@
+# Déploiement de démo : un worker qui simule du traitement
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: velib-worker
+  namespace: velibdata
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: velib-worker
+  template:
+    metadata:
+      labels:
+        app: velib-worker
+    spec:
+      containers:
+        - name: worker
+          image: nginx:alpine
+          resources:
+            requests:
+              cpu: "100m"
+            limits:
+              cpu: "200m"
+---
+# Règle d'autoscaling KEDA : scale selon la charge CPU
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: velib-worker-scaler
+  namespace: velibdata
+spec:
+  scaleTargetRef:
+    name: velib-worker
+  minReplicaCount: 1
+  maxReplicaCount: 10
+  triggers:
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        value: "50"

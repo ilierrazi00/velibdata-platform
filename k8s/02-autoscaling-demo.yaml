@@ -1,9 +1,83 @@
-# Déploiement de démo : un worker qui simule du traitement
+# Autoscaling evenementiel reel : le nombre de workers varie selon le consumer lag Kafka.
+# Le broker de demonstration est lance avec docker-compose.keda.yml et expose sur
+# host.docker.internal:29092 pour Docker Desktop Kubernetes.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: velib-kafka-worker-script
+  namespace: velibdata
+data:
+  worker.py: |
+    import os
+    import signal
+    import sys
+    import time
+
+    from kafka import KafkaConsumer
+
+    bootstrap = os.getenv("KAFKA_BOOTSTRAP", "host.docker.internal:29092")
+    topic = os.getenv("KAFKA_TOPIC", "velib.keda.demo")
+    group = os.getenv("KAFKA_CONSUMER_GROUP", "velib-keda-workers")
+    processing_delay = float(os.getenv("PROCESSING_DELAY_SECONDS", "1"))
+    running = True
+
+    def stop(_signum, _frame):
+        global running
+        running = False
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+
+    consumer = KafkaConsumer(
+        topic,
+        bootstrap_servers=bootstrap,
+        group_id=group,
+        auto_offset_reset="earliest",
+        enable_auto_commit=False,
+        max_poll_records=1,
+        session_timeout_ms=10000,
+        heartbeat_interval_ms=3000,
+        value_deserializer=lambda value: value.decode("utf-8", errors="replace"),
+    )
+
+    # Force la connexion, l'affectation des partitions et la creation du consumer group.
+    consumer.poll(timeout_ms=1000)
+    with open("/tmp/worker-ready", "w", encoding="utf-8") as ready_file:
+        ready_file.write("ready")
+
+    print(
+        f"worker_ready bootstrap={bootstrap} topic={topic} group={group} "
+        f"delay={processing_delay}s",
+        flush=True,
+    )
+
+    try:
+        while running:
+            records = consumer.poll(timeout_ms=1000, max_records=1)
+            if not records:
+                continue
+            for topic_partition, messages in records.items():
+                for message in messages:
+                    print(
+                        f"processing partition={topic_partition.partition} "
+                        f"offset={message.offset} value={message.value}",
+                        flush=True,
+                    )
+                    time.sleep(processing_delay)
+                    consumer.commit()
+    finally:
+        consumer.close(autocommit=False)
+        print("worker_stopped", flush=True)
+        sys.exit(0)
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: velib-worker
   namespace: velibdata
+  labels:
+    app: velib-worker
+    component: kafka-consumer
 spec:
   replicas: 1
   selector:
@@ -13,17 +87,54 @@ spec:
     metadata:
       labels:
         app: velib-worker
+        component: kafka-consumer
     spec:
+      terminationGracePeriodSeconds: 30
       containers:
         - name: worker
-          image: nginx:alpine
+          image: python:3.12-slim
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - >-
+              pip install --no-cache-dir kafka-python-ng==2.2.3 &&
+              python /app/worker.py
+          env:
+            - name: KAFKA_BOOTSTRAP
+              value: host.docker.internal:29092
+            - name: KAFKA_TOPIC
+              value: velib.keda.demo
+            - name: KAFKA_CONSUMER_GROUP
+              value: velib-keda-workers
+            - name: PROCESSING_DELAY_SECONDS
+              value: "1"
+          volumeMounts:
+            - name: worker-script
+              mountPath: /app/worker.py
+              subPath: worker.py
+              readOnly: true
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - test -f /tmp/worker-ready
+            initialDelaySeconds: 2
+            periodSeconds: 3
+            failureThreshold: 30
           resources:
             requests:
-              cpu: "100m"
+              cpu: 50m
+              memory: 96Mi
             limits:
-              cpu: "200m"
+              cpu: 300m
+              memory: 256Mi
+      volumes:
+        - name: worker-script
+          configMap:
+            name: velib-kafka-worker-script
 ---
-# Règle d'autoscaling KEDA : scale selon la charge CPU
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
@@ -32,10 +143,36 @@ metadata:
 spec:
   scaleTargetRef:
     name: velib-worker
+  pollingInterval: 5
+  cooldownPeriod: 30
   minReplicaCount: 1
-  maxReplicaCount: 10
+  maxReplicaCount: 5
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 0
+          policies:
+            - type: Percent
+              value: 100
+              periodSeconds: 15
+            - type: Pods
+              value: 4
+              periodSeconds: 15
+          selectPolicy: Max
+        scaleDown:
+          stabilizationWindowSeconds: 30
+          policies:
+            - type: Percent
+              value: 100
+              periodSeconds: 15
   triggers:
-    - type: cpu
-      metricType: Utilization
+    - type: kafka
       metadata:
-        value: "50"
+        bootstrapServers: host.docker.internal:29092
+        consumerGroup: velib-keda-workers
+        topic: velib.keda.demo
+        lagThreshold: "20"
+        activationLagThreshold: "1"
+        offsetResetPolicy: earliest
+        allowIdleConsumers: "false"
