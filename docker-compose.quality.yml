@@ -1,0 +1,4 @@
+services:
+  great-expectations:
+    volumes:
+      - ./evidence:/evidence
